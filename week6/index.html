@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>날씨 지도(6주차)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; }
+        #map { height: 100vh; width: 100vw; }
+        #controls {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        #searchContainer {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        #searchInput {
+            flex: 1;
+            padding: 5px;
+        }
+        #clearSearch {
+            margin-left: 5px;
+            background: #ddd;
+            border: none;
+            border-radius: 3px;
+            padding: 2px 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="controls">
+        <div id="searchContainer">
+            <input type="text" id="searchInput" placeholder="지역 검색"/>
+            <button id="clearSearch">×</button>
+            <button id="searchButton">검색</button>
+        </div>
+        <label><input type="checkbox" id="tempCheck"> 기온</label><br>
+        <label><input type="checkbox" id="pm10Check"> 미세먼지</label><br>
+        <label><input type="checkbox" id="pm25Check"> 초미세먼지</label><br><br>
+        <button id="selectAll">전체 선택</button>
+        <button id="deselectAll">전체 해제</button><br><br>
+        <button id="refreshButton">새로 고침</button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([36.5, 127.8], 7);
+        const apiKey = '278cba3ce47dbfe50d7711a72cdcd566'; // 여기에 API 키 삽입
+        const defaultView = { lat: 36.5, lng: 127.8, zoom: 7 };
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        const locations = [
+            { id: 1835848, name: "서울", lat: 37.5665, lng: 126.9780 },
+            { id: 1838524, name: "부산", lat: 35.1796, lng: 129.0756 }
+        ];
+
+        let overlays = [];
+
+        async function getWeather(lat, lon, id = null) {
+            const weatherURL = id 
+                ? `https://api.openweathermap.org/data/2.5/weather?id=${id}&units=metric&appid=${apiKey}`
+                : `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&appid=${apiKey}`;
+            const airURL = `https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${apiKey}`;
+
+            try {
+                const [weatherRes, airRes] = await Promise.all([
+                    fetch(weatherURL).then(res => res.json()),
+                    fetch(airURL).then(res => res.json())
+                ]);
+
+                return {
+                    temp: weatherRes.main.temp.toFixed(1) + "°C",
+                    pm10: airRes.list[0].components.pm10 + "㎍/m³",
+                    pm25: airRes.list[0].components.pm2_5 + "㎍/m³",
+                    name: weatherRes.name
+                };
+            } catch (err) {
+                console.error("날씨 불러오기 실패:", err);
+                return null;
+            }
+        }
+
+        function clearOverlays() {
+            overlays.forEach(o => map.removeLayer(o));
+            overlays = [];
+        }
+
+        async function updateOverlays() {
+            clearOverlays();
+
+            for (let loc of locations) {
+                const data = await getWeather(loc.lat, loc.lng, loc.id);
+                if (!data) continue;
+
+                // 이름 한글로 고정
+                data.name = loc.name;
+
+                let content = `<b>${data.name}</b>`;
+                if (document.getElementById('tempCheck').checked) content += `<br>기온: ${data.temp}`;
+                if (document.getElementById('pm10Check').checked) content += `<br>미세먼지: ${data.pm10}`;
+                if (document.getElementById('pm25Check').checked) content += `<br>초미세먼지: ${data.pm25}`;
+                if (content === `<b>${data.name}</b>`) continue;
+
+                const overlay = L.popup({ offset: [0, -10], autoClose: false, closeOnClick: false })
+                    .setLatLng([loc.lat, loc.lng])
+                    .setContent(content)
+                    .openOn(map);
+                overlays.push(overlay);
+            }
+        }
+
+        async function searchLocation() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+            const results = await res.json();
+            if (results.length === 0) {
+                alert("검색 결과가 없습니다.");
+                return;
+            }
+
+            const { lat, lon, display_name } = results[0];
+            map.setView([lat, lon], 10);
+
+            const data = await getWeather(lat, lon);
+            if (!data) return;
+
+            let content = `<b>${display_name}</b>`;
+            content += `<br>기온: ${data.temp}`;
+            content += `<br>미세먼지: ${data.pm10}`;
+            content += `<br>초미세먼지: ${data.pm25}`;
+
+            clearOverlays();
+
+            const overlay = L.popup({ autoClose: false, closeOnClick: false })
+                .setLatLng([lat, lon])
+                .setContent(content)
+                .openOn(map);
+
+            overlays.push(overlay);
+        }
+
+        document.getElementById('refreshButton').addEventListener('click', updateOverlays);
+        document.getElementById('searchButton').addEventListener('click', searchLocation);
+        document.getElementById('clearSearch').addEventListener('click', () => {
+            document.getElementById('searchInput').value = '';
+            map.setView([defaultView.lat, defaultView.lng], defaultView.zoom);
+            clearOverlays();
+            updateOverlays();
+        });
+
+        document.getElementById('selectAll').addEventListener('click', () => {
+            ['tempCheck', 'pm10Check', 'pm25Check'].forEach(id => document.getElementById(id).checked = true);
+            updateOverlays();
+        });
+
+        document.getElementById('deselectAll').addEventListener('click', () => {
+            ['tempCheck', 'pm10Check', 'pm25Check'].forEach(id => document.getElementById(id).checked = false);
+            updateOverlays();
+        });
+
+        ['tempCheck', 'pm10Check', 'pm25Check'].forEach(id => {
+            document.getElementById(id).addEventListener('change', updateOverlays);
+        });
+    </script>
+</body>
+</html>
